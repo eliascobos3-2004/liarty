@@ -30,7 +30,7 @@ Desarrollado con dedicación por **EL-33**.
 
 ## 📲 Instalación (APK)
 
-Puedes descargar la última versión del APK directamente desde la pestaña **Actions** de este repositorio o en la sección de **Releases**.
+Puedes descargar la última versión del APK directamente desde la pestaña **Actions** (compilación automática) o desde la sección de [Releases](https://github.com/eliascobos3-2004/liarty/releases).
 
 ---
 
