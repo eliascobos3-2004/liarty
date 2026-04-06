@@ -44,10 +44,15 @@ dependencies:
   table_calendar: ^3.1.2
   intl: ^0.19.0
   url_launcher: ^6.3.0 # Añadimos la dependencia para abrir el correo
+  image_picker: ^1.0.7
+  uuid: ^4.2.2
+  share_plus: ^10.1.0
+  path_provider: ^2.1.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.13.1
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -55,6 +60,11 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/liarty_icon.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -71,6 +81,7 @@ flutter:
     - assets/images/img_2.jpeg
     - assets/images/img_3.jpeg
     - assets/images/bienvenida.jpeg
+    - assets/images/liarty_icon.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

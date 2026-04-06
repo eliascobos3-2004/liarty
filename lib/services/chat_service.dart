@@ -1,10 +1,11 @@
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:uuid/uuid.dart'; // For generating unique IDs
 import 'package:timezone/timezone.dart' as tz;
+import 'dart:convert'; // For JSON encoding/decoding
 import '../main.dart';
 
-// Posibles estados de la conversación con el asistente
 enum ChatState {
   idle,
   askingName,
@@ -14,8 +15,7 @@ enum ChatState {
   selectingPriority,
   selectingDay,
   selectingRoutineDays,
-  selectingTime,
-  selectingEvaluationTime,
+  selectingTime, // This state will now directly lead to saving the event
   selectingListadoDay,
   viewingSummary
 }
@@ -38,7 +38,7 @@ class ChatService {
   String getInitialMessage() {
     final box = Hive.box('events');
     final prefs = Hive.box('liarty_prefs');
-    final String? userName = prefs.get('user_name');
+    final String userName = prefs.get('user_name', defaultValue: 'amigo');
 
     final now = DateTime.now();
     final todayTasks = (box.get('list', defaultValue: []) as List)
@@ -173,21 +173,6 @@ class ChatService {
         _currentState = ChatState.selectingTime;
         return "Ahora, selecciona la hora en la que quieres programarlo:";
 
-      case ChatState.selectingEvaluationTime:
-        try {
-          final parts = input.split(':');
-          final time =
-              TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
-          Hive.box('liarty_prefs').put('evaluation_time', input);
-
-          // Programar la notificación real
-          await scheduleDailyEvaluation(time);
-        } catch (e) {
-          return "Error al configurar la hora. Inténtalo de nuevo.";
-        }
-        _currentState = ChatState.idle;
-        return "¡Configuración completa! Tu puntuación actual es de 0 puntos. ¡Empieza a cumplir para subir de nivel!";
-
       // Paso 4: Hora (Viene del TimePicker nativo)
       case ChatState.selectingTime:
         try {
@@ -207,24 +192,24 @@ class ChatService {
               DateTime(baseDate.year, baseDate.month, baseDate.day, h, m);
           _tempEvent['finalDate'] = finalDate;
 
+          // Capturamos los datos ANTES de guardar, porque _saveEvent limpia _tempEvent
+          final String confirmedTitle = title;
+          final String confirmedType = type;
+          final String confirmedRoutineDays =
+              _tempEvent['routine_days']?.toString() ?? "Hoy";
+
           await _saveEvent();
-
-          // Verificar si falta la hora de evaluación
-          final prefs = Hive.box('liarty_prefs');
-          if (prefs.get('evaluation_time') == null) {
-            _currentState = ChatState.selectingEvaluationTime;
-            return "Evento guardado. Para finalizar tu perfil, ¿A qué hora prefieres que haga tu evaluación diaria de desempeño?";
-          }
-
           _currentState = ChatState.idle;
-          String typeLabel = type == "ADD_TASK"
+          String typeLabel = confirmedType == "ADD_TASK"
               ? "la Tarea"
-              : type == "ADD_ACTIVITY"
+              : confirmedType == "ADD_ACTIVITY"
                   ? "la Actividad"
                   : "la Rutina";
+
           String routineInfo =
-              type == "ADD_ROUTINE" ? " (${_tempEvent['routine_days']})" : "";
-          return "¡Perfecto! He agendado $typeLabel: '$title'$routineInfo para las $displayHour:${m.toString().padLeft(2, '0')} $ampm. ¿Quieres agendar algo más?";
+              confirmedType == "ADD_ROUTINE" ? " ($confirmedRoutineDays)" : "";
+
+          return "¡Perfecto! He agendado $typeLabel: '$confirmedTitle'$routineInfo para las $displayHour:${m.toString().padLeft(2, '0')} $ampm. ¿Quieres agendar algo más?";
         } catch (e) {
           _currentState = ChatState.idle;
           return "Hubo un error al calcular el horario. Reintentemos.";
@@ -251,7 +236,6 @@ class ChatService {
       case ChatState.selectingRoutineDays:
         return ["Seleccionar Días", "Todos los días"];
       case ChatState.selectingTime:
-      case ChatState.selectingEvaluationTime:
         return ["Seleccionar Hora"];
       case ChatState.viewingSummary:
         return ["Sí", "No"];
@@ -263,10 +247,13 @@ class ChatService {
   // Guarda el evento en Hive y programa la notificación si es Tarea
   Future<void> _saveEvent() async {
     final box = Hive.box('events');
-    final list = List.from(box.get('list', defaultValue: []));
+    final List<Map<String, dynamic>> list = List.from(
+        box.get('list', defaultValue: []).cast<Map<String, dynamic>>());
+    final String id = Uuid().v4(); // Generate unique ID
 
     // Creamos el objeto del evento
     list.add({
+      'id': id, // Add unique ID
       'type': _tempEvent['type'],
       'title': _tempEvent['title'],
       'data': (_tempEvent['finalDate'] as DateTime).toIso8601String(),
@@ -276,10 +263,13 @@ class ChatService {
     });
     await box.put('list', list);
 
-    // Programación de la alarma física
+    // Schedule physical alarm only for tasks
     if (_tempEvent['type'] == "ADD_TASK") {
+      // Cancel any existing notification for this ID before scheduling a new one
+      await flutterLocalNotificationsPlugin.cancel(id.hashCode);
+
       await flutterLocalNotificationsPlugin.zonedSchedule(
-          0,
+          id.hashCode, // Use hash of UUID as notification ID
           'Recordatorio',
           _tempEvent['title'],
           tz.TZDateTime.from(_tempEvent['finalDate'], tz.local),
@@ -287,7 +277,8 @@ class ChatService {
               android: AndroidNotificationDetails('liarty_alarms', 'Alarmas')),
           androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
           uiLocalNotificationDateInterpretation:
-              UILocalNotificationDateInterpretation.absoluteTime);
+              UILocalNotificationDateInterpretation.absoluteTime,
+          payload: jsonEncode({'id': id, 'type': 'ADD_TASK'})); // Add payload
     }
     _tempEvent = {};
   }

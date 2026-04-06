@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Para sonidos del sistema
+import 'package:flutter/foundation.dart'; // Para kIsWeb
+import 'dart:io'; // Para manejar archivos de imagen
 import 'package:hive_flutter/hive_flutter.dart';
+import 'dart:convert'; // For JSON encoding/decoding
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
@@ -51,15 +54,41 @@ void main() async {
   // Configuración inicial de notificaciones para Android
   const AndroidInitializationSettings initializationSettingsAndroid =
       AndroidInitializationSettings('@mipmap/ic_launcher');
-  const InitializationSettings initializationSettings =
-      InitializationSettings(android: initializationSettingsAndroid);
+  const InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+  );
 
   await flutterLocalNotificationsPlugin.initialize(
     initializationSettings,
-    onDidReceiveNotificationResponse: (NotificationResponse details) {
-      // Aquí se podría navegar a una pantalla específica o disparar un evento
-      // para mostrar la plantilla de cumplimiento.
-      debugPrint("Notificación tocada: ${details.payload}");
+    onDidReceiveNotificationResponse: (NotificationResponse details) async {
+      if (details.payload != null) {
+        try {
+          final Map<String, dynamic> payload = jsonDecode(details.payload!);
+          final String eventId = payload['id'];
+          final String eventType = payload['type'];
+
+          // Fetch the event from Hive
+          final box = Hive.box('events');
+          final List events = box.get('list', defaultValue: []);
+          final event =
+              events.firstWhere((e) => e['id'] == eventId, orElse: () => null);
+
+          if (event != null) {
+            // Navigate to CompletionPage
+            navigatorKey.currentState?.push(
+              MaterialPageRoute(
+                builder: (context) => CompletionPage(
+                  eventIndex:
+                      -1, // Indicate it's from notification, not list index
+                  eventData: event,
+                ),
+              ),
+            );
+          }
+        } catch (e) {
+          debugPrint("Error parsing notification payload: $e");
+        }
+      }
     },
   );
 
@@ -71,8 +100,27 @@ void main() async {
   // Inicializar Hive (Base de datos local) y abrir las "cajas" (tablas)
   await Hive.initFlutter();
   await Hive.openBox('liarty_prefs'); // Preferencias: tema, caché de clima
+  await Hive.openBox('routine_completions'); // New box for routine completions
   await Hive.openBox('events'); // Eventos: Tareas, Actividades y Rutinas
   await Hive.openBox('notes'); // Caja para notas encriptadas
+
+  // Request exact alarm and post notifications permissions
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>()
+      ?.requestNotificationsPermission();
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>()
+      ?.requestExactAlarmsPermission();
+
+  // Set default evaluation time and schedule it if not already set
+  final prefs = Hive.box('liarty_prefs');
+  if (prefs.get('evaluation_time') == null) {
+    prefs.put('evaluation_time', '21:00'); // Default to 9 PM
+    await scheduleDailyEvaluation(TimeOfDay(hour: 21, minute: 0));
+  }
+
   runApp(const LiartyApp());
 }
 
@@ -87,6 +135,7 @@ class LiartyApp extends StatelessWidget {
         final int colorIndex = box.get('theme_color_index', defaultValue: 0);
         final String bgType = box.get('bg_type', defaultValue: 'color');
         final int imgIndex = box.get('bg_image_index', defaultValue: 0);
+        final String? customBgPath = box.get('custom_bg_path');
 
         final appColors = [
           const Color.fromARGB(255, 84, 129, 39),
@@ -96,56 +145,67 @@ class LiartyApp extends StatelessWidget {
         ];
 
         final images = ['img_1.jpeg', 'img_2.jpeg', 'img_3.jpeg'];
-
         Color selectedColor = appColors[colorIndex];
 
+        DecorationImage? decorationImage;
+        if (bgType == 'image') {
+          decorationImage = DecorationImage(
+            image: AssetImage('assets/images/${images[imgIndex]}'),
+            fit: BoxFit.cover,
+          );
+        } else if (bgType == 'custom_image' &&
+            customBgPath != null &&
+            !kIsWeb &&
+            File(customBgPath).existsSync()) {
+          decorationImage = DecorationImage(
+            image: FileImage(File(customBgPath)),
+            fit: BoxFit.cover,
+          );
+        }
+
         return MaterialApp(
-          title: 'Liarty',
-          debugShowCheckedModeBanner: false,
-          theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: selectedColor,
-              brightness: Brightness.light,
-              primary: selectedColor,
-              onSurface: Colors.black,
-              onPrimary: Colors.black,
+            title: 'Liarty',
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: selectedColor,
+                brightness: Brightness.light,
+                primary: selectedColor,
+                onSurface: Colors.black,
+                onPrimary: Colors.black,
+              ),
+              // Establecemos Times New Roman como fuente principal (Serif)
+              fontFamily: 'serif',
+              appBarTheme: const AppBarTheme(
+                backgroundColor: Colors.transparent,
+                elevation: 0,
+                foregroundColor: Colors.black,
+                titleTextStyle: TextStyle(
+                    color: Colors.black,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold),
+              ),
+              textTheme: const TextTheme(
+                bodyLarge: TextStyle(color: Colors.black),
+                bodyMedium: TextStyle(color: Colors.black),
+              ).apply(
+                bodyColor: Colors.black,
+                displayColor: Colors.black,
+              ),
+              useMaterial3: true,
             ),
-            // Establecemos Times New Roman como fuente principal (Serif)
-            fontFamily: 'serif',
-            appBarTheme: const AppBarTheme(
-              backgroundColor: Colors.transparent,
-              elevation: 0,
-              foregroundColor: Colors.black,
-              titleTextStyle: TextStyle(
-                  color: Colors.black,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold),
-            ),
-            textTheme: const TextTheme(
-              bodyLarge: TextStyle(color: Colors.black),
-              bodyMedium: TextStyle(color: Colors.black),
-            ).apply(
-              bodyColor: Colors.black,
-              displayColor: Colors.black,
-            ),
-            useMaterial3: true,
-          ),
-          // Si el nombre es nulo, mostramos la nueva pantalla de Bienvenida
-          home: box.get('user_name') == null
-              ? const WelcomePage()
-              : Container(
-                  decoration: bgType == 'color'
-                      ? BoxDecoration(color: selectedColor)
-                      : BoxDecoration(
-                          image: DecorationImage(
-                            image:
-                                AssetImage('assets/images/${images[imgIndex]}'),
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                  child: const MainScaffold(),
-                ),
-        );
+            // Si el nombre es nulo, mostramos la nueva pantalla de Bienvenida
+            home: box.get('user_name') == null
+                ? const WelcomePage()
+                : Container(
+                    decoration: BoxDecoration(
+                        color: selectedColor, image: decorationImage),
+                    // Added navigatorKey for global navigation from notifications
+                    child: Navigator(
+                        key: navigatorKey,
+                        onGenerateRoute: (settings) => MaterialPageRoute(
+                            builder: (context) => const MainScaffold())),
+                  ));
       },
     );
   }
@@ -239,6 +299,8 @@ class _WelcomePageState extends State<WelcomePage> {
     );
   }
 }
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 class MainScaffold extends StatefulWidget {
   const MainScaffold({super.key});

@@ -26,12 +26,27 @@ class StatusScreen extends StatelessWidget {
     };
   }
 
+  String _getUserRank(int score) {
+    if (score >= 1000) return "🏆 Leyenda de Liarty";
+    if (score >= 500) return "💎 Maestro de Metas";
+    if (score >= 200) return "🥇 Guerrero de Rutinas";
+    if (score >= 50) return "🥈 Aspirante Activo";
+    return "🥉 Novato Productivo";
+  }
+
   @override
   Widget build(BuildContext context) {
+    final prefsBox = Hive.box('liarty_prefs');
+    final int score = prefsBox.get('user_score', defaultValue: 0);
+
     return ValueListenableBuilder(
       valueListenable: Hive.box('events').listenable(),
       builder: (context, box, _) {
         final allEvents = box.get('list', defaultValue: []) as List;
+        final routineCompletions = Hive.box('routine_completions').length;
+        final totalDone =
+            allEvents.where((e) => e['isCompleted'] == true).length +
+                routineCompletions;
 
         final daily = _calculateStats(
             allEvents
@@ -52,12 +67,23 @@ class StatusScreen extends StatelessWidget {
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center,
               ),
+              const SizedBox(height: 10),
+              Text(
+                _getUserRank(score),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Theme.of(context).primaryColor,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  letterSpacing: 1.2,
+                ),
+              ),
               const SizedBox(height: 20),
               _buildStatCard("Progreso Diario", daily, Colors.blue),
               _buildStatCard("Progreso Semanal", weekly, Colors.green),
               _buildStatCard("Progreso Mensual", monthly, Colors.purple),
               const SizedBox(height: 20),
-              _buildAchievementsSection(allEvents),
+              _buildAchievementsSection(totalDone),
             ],
           ),
         );
@@ -99,10 +125,7 @@ class StatusScreen extends StatelessWidget {
         ));
   }
 
-  Widget _buildAchievementsSection(List allEvents) {
-    final completedTotal =
-        allEvents.where((e) => e['isCompleted'] == true).length;
-
+  Widget _buildAchievementsSection(int completedTotal) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
